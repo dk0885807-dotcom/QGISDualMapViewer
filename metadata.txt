@@ -1,0 +1,16 @@
+[general]
+name=QGIS Dual Viewer
+description=Dual synchronized map canvases for side-by-side visual comparison in QGIS
+version=1.0.0
+qgisMinimumVersion=3.34
+author=Deepak Kumar; Surya Shankar Kaibartya
+email=dk0885807@gmail.com
+category=View
+about=QGIS Dual Viewer provides two independent map canvases with real-time synchronized pan and zoom. Each view has its own layer panel, enabling effective side-by-side comparison of spatial datasets within QGIS.
+homepage=https://github.com/dk0885807-dotcom/QGISDualViewer
+repository=https://github.com/dk0885807-dotcom/QGISDualViewer
+tracker=https://github.com/dk0885807-dotcom/QGISDualViewer/issues
+license=GPL-2.0-or-later
+experimental=False
+deprecated=False
+
