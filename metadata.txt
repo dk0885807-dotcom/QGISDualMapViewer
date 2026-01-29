@@ -7,6 +7,12 @@ author=Deepak Kumar; Surya Shankar Kaibartya
 email=dk0885807@gmail.com
 category=View
 about=QGIS Dual Viewer provides two independent map canvases with real-time synchronized pan, zoom, and cursor position. Each view has its own independent layer panel, enabling effective side-by-side comparison of spatial datasets within QGIS. The latest version adds toolbar controls for docking, undocking, closing, and reopening the dual viewer for a smoother comparison workflow.
+
+homepage=https://github.com/dk0885807-dotcom/QGISDualMapViewer
+repository=https://github.com/dk0885807-dotcom/QGISDualMapViewer
+tracker=https://github.com/dk0885807-dotcom/QGISDualMapViewer/issues
+
 license=GPL-2.0-or-later
 experimental=False
 deprecated=False
+
