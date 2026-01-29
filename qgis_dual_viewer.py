@@ -1,9 +1,9 @@
 import os
 
 from qgis.PyQt.QtWidgets import (
-    QAction, QDockWidget, QWidget,
-    QVBoxLayout, QHBoxLayout,
-    QPushButton, QToolBar, QToolButton
+    QDockWidget, QWidget,
+    QVBoxLayout, QPushButton, QMenu,
+    QToolButton, QHBoxLayout
 )
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
@@ -26,108 +26,121 @@ class QGISDualViewer:
         self.iface = iface
         self.plugin_dir = os.path.dirname(__file__)
 
-        self.main_canvas = iface.mapCanvas()
+        # Left (main) canvas
+        self.left_canvas = iface.mapCanvas()
 
+        # Right canvas
         self.right_canvas = None
+
+        # Right layer tree
         self.right_root = QgsLayerTree()
         self.bridge = None
 
+        # UI
         self.map_dock = None
         self.toc_dock = None
-
-        self.cursor_marker = None
         self.toolbar = None
+
+        self.btn_toggle_dock = None
+
+        # Cursor markers
+        self.cursor_marker_outer = None
+        self.cursor_marker_inner = None
+
+        self._syncing = False
+
+    # --------------------------------------------------
+    # GUI
+    # --------------------------------------------------
 
     def initGui(self):
         icon_path = os.path.join(self.plugin_dir, "icon.png")
 
-        self.action = QAction(
-            QIcon(icon_path),
-            "QGIS Dual Viewer",
-            self.iface.mainWindow()
-        )
-        self.action.setToolTip("QGIS Dual Viewer")
-        self.action.setStatusTip("Open QGIS Dual Viewer")
-        self.action.triggered.connect(self.run)
-
-        # Plugin-specific toolbar
         self.toolbar = self.iface.addToolBar("QGIS Dual Viewer")
         self.toolbar.setObjectName("QGISDualViewerToolbar")
-        self.toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.toolbar.addAction(self.action)
 
-        # ---- Subtle grey styling (compact) ----
-        for widget in self.toolbar.findChildren(QToolButton):
-            widget.setStyleSheet("""
-                QToolButton {
-                    background-color: #EEEEEE;
-                    border: 1px solid #BDBDBD;
-                    border-radius: 3px;
-                    padding: 2px 6px;
-                    margin: 1px;
-                }
-                QToolButton:hover {
-                    background-color: #E0E0E0;
-                }
-                QToolButton:pressed {
-                    background-color: #D6D6D6;
-                }
-            """)
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(3, 2, 3, 2)
+        layout.setSpacing(3)
 
-        self.iface.addPluginToMenu("View", self.action)
+        container.setStyleSheet("""
+            QWidget {
+                border: 1px solid #b0b0b0;
+                background: transparent;
+            }
+        """)
+
+        btn_open = QToolButton()
+        btn_open.setIcon(QIcon(icon_path))
+        btn_open.setText("QGIS Dual Viewer")
+        btn_open.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        btn_open.clicked.connect(self.run)
+        btn_open.setCursor(Qt.PointingHandCursor)
+
+        self.btn_toggle_dock = QToolButton()
+        self.btn_toggle_dock.setText("Undock")
+        self.btn_toggle_dock.clicked.connect(self.toggle_dock)
+        self.btn_toggle_dock.setCursor(Qt.PointingHandCursor)
+
+        btn_close = QToolButton()
+        btn_close.setText("Close Viewer")
+        btn_close.clicked.connect(self.close_viewer)
+        btn_close.setCursor(Qt.PointingHandCursor)
+
+        layout.addWidget(btn_open)
+        layout.addWidget(self.btn_toggle_dock)
+        layout.addWidget(btn_close)
+
+        self.toolbar.addWidget(container)
 
     def unload(self):
         if self.toolbar:
             self.iface.mainWindow().removeToolBar(self.toolbar)
-        self.iface.removePluginMenu("View", self.action)
 
-    def _on_map_dock_closed(self):
-        self.map_dock = None
-        self.right_canvas = None
-        self.bridge = None
-        self.cursor_marker = None
-
-    def _on_toc_dock_closed(self):
-        self.toc_dock = None
+    # --------------------------------------------------
+    # MAIN
+    # --------------------------------------------------
 
     def run(self):
 
+        # ---------- RIGHT MAP VIEW ----------
         if self.map_dock is None:
-            self.map_dock = QDockWidget("Right Map – Viewer", self.iface.mainWindow())
+            self.map_dock = QDockWidget("Right Viewer", self.iface.mainWindow())
+
             self.map_dock.setFeatures(
                 QDockWidget.DockWidgetMovable |
-                QDockWidget.DockWidgetFloatable |
-                QDockWidget.DockWidgetClosable
+                QDockWidget.DockWidgetFloatable
             )
-            self.map_dock.setAttribute(Qt.WA_DeleteOnClose)
-            self.map_dock.destroyed.connect(self._on_map_dock_closed)
+
+            # Clean docked look
+            self.map_dock.setTitleBarWidget(QWidget())
 
             container = QWidget()
             layout = QVBoxLayout(container)
+            layout.setContentsMargins(0, 0, 0, 0)
 
-            self.right_canvas = QgsMapCanvas()
+            self.right_canvas = QgsMapCanvas(container)
             self.right_canvas.setCanvasColor(Qt.white)
-            self.right_canvas.setExtent(self.main_canvas.extent())
-            layout.addWidget(self.right_canvas)
+            self.right_canvas.setDestinationCrs(
+                self.left_canvas.mapSettings().destinationCrs()
+            )
 
+            layout.addWidget(self.right_canvas)
             self.map_dock.setWidget(container)
+
             self.iface.addDockWidget(Qt.RightDockWidgetArea, self.map_dock)
         else:
             self.map_dock.show()
             self.map_dock.raise_()
 
+        # ---------- RIGHT LAYERS PANEL ----------
         if self.toc_dock is None:
             self.toc_dock = QDockWidget("Right Map – Layers", self.iface.mainWindow())
-            self.toc_dock.setFeatures(
-                QDockWidget.DockWidgetMovable |
-                QDockWidget.DockWidgetFloatable |
-                QDockWidget.DockWidgetClosable
-            )
-            self.toc_dock.setAttribute(Qt.WA_DeleteOnClose)
-            self.toc_dock.destroyed.connect(self._on_toc_dock_closed)
 
             toc_container = QWidget()
             toc_layout = QVBoxLayout(toc_container)
+            toc_layout.setContentsMargins(4, 4, 4, 4)
 
             btn_add = QPushButton("Add → Right Map")
             btn_add.clicked.connect(self.add_selected_layers)
@@ -135,64 +148,145 @@ class QGISDualViewer:
 
             self.tree_view = QgsLayerTreeView()
             self.tree_model = QgsLayerTreeModel(self.right_root)
-            self.tree_model.setFlag(QgsLayerTreeModel.AllowNodeReorder)
-            self.tree_model.setFlag(QgsLayerTreeModel.AllowNodeRename)
-            self.tree_model.setFlag(QgsLayerTreeModel.AllowNodeChangeVisibility)
+            self.tree_model.setFlag(QgsLayerTreeModel.AllowNodeChangeVisibility, True)
+            self.tree_model.setFlag(QgsLayerTreeModel.AllowNodeReorder, True)
 
             self.tree_view.setModel(self.tree_model)
+            self.tree_view.setContextMenuPolicy(Qt.CustomContextMenu)
+            self.tree_view.customContextMenuRequested.connect(
+                self.right_layer_context_menu
+            )
+
             toc_layout.addWidget(self.tree_view)
-
             self.toc_dock.setWidget(toc_container)
-            self.iface.addDockWidget(Qt.RightDockWidgetArea, self.toc_dock)
-        else:
-            self.toc_dock.show()
-            self.toc_dock.raise_()
 
-        if self.right_canvas and not self.bridge:
+            self.iface.addDockWidget(Qt.LeftDockWidgetArea, self.toc_dock)
+
+            for dock in self.iface.mainWindow().findChildren(QDockWidget):
+                if dock.windowTitle() == "Layers":
+                    self.iface.mainWindow().splitDockWidget(
+                        dock, self.toc_dock, Qt.Vertical
+                    )
+                    break
+
+        # ---------- BRIDGE ----------
+        if not self.bridge:
             self.bridge = QgsLayerTreeMapCanvasBridge(
                 self.right_root, self.right_canvas
             )
+            self.bridge.setAutoSetupOnFirstLayer(False)
 
-        if self.right_canvas and not self.cursor_marker:
-            self.cursor_marker = QgsVertexMarker(self.right_canvas)
-            self.cursor_marker.setIconType(QgsVertexMarker.ICON_CROSS)
-            self.cursor_marker.setColor(Qt.red)
-            self.cursor_marker.setIconSize(12)
-            self.cursor_marker.setPenWidth(2)
-            self.cursor_marker.hide()
+        # ---------- CURSOR ----------
+        if not self.cursor_marker_outer:
+            self.cursor_marker_outer = QgsVertexMarker(self.right_canvas)
+            self.cursor_marker_outer.setIconType(QgsVertexMarker.ICON_CROSS)
+            self.cursor_marker_outer.setColor(Qt.black)
+            self.cursor_marker_outer.setIconSize(16)
+            self.cursor_marker_outer.setPenWidth(3)
 
-        self.main_canvas.extentsChanged.connect(self.sync_extent_func)
-        self.main_canvas.xyCoordinates.connect(self.sync_cursor_func)
+        if not self.cursor_marker_inner:
+            self.cursor_marker_inner = QgsVertexMarker(self.right_canvas)
+            self.cursor_marker_inner.setIconType(QgsVertexMarker.ICON_CROSS)
+            self.cursor_marker_inner.setColor(Qt.white)
+            self.cursor_marker_inner.setIconSize(10)
+            self.cursor_marker_inner.setPenWidth(2)
 
-        self.refresh_right_canvas()
+        # ---------- SYNC ----------
+        self.left_canvas.extentsChanged.connect(self.sync_left_to_right)
+        self.left_canvas.xyCoordinates.connect(self.sync_cursor)
+        self.right_canvas.xyCoordinates.connect(self.sync_cursor)
+        self.left_canvas.destinationCrsChanged.connect(
+            self.sync_left_crs_to_right
+        )
 
-    def add_selected_layers(self):
-        if not self.right_canvas:
+    # --------------------------------------------------
+    # TOOLBAR ACTIONS
+    # --------------------------------------------------
+
+    def toggle_dock(self):
+        if not self.map_dock:
             return
 
+        if self.map_dock.isFloating():
+            # Dock back (no title bar)
+            self.map_dock.setFloating(False)
+            self.iface.addDockWidget(Qt.RightDockWidgetArea, self.map_dock)
+            self.map_dock.setTitleBarWidget(QWidget())
+            self.btn_toggle_dock.setText("Undock")
+
+        else:
+            # True floating window
+            self.map_dock.setTitleBarWidget(None)
+            self.map_dock.setWindowTitle("Right Viewer")
+            self.map_dock.setFloating(True)
+            self.map_dock.show()
+            self.map_dock.raise_()
+            self.btn_toggle_dock.setText("Dock")
+
+    def close_viewer(self):
+        if self.map_dock:
+            self.iface.removeDockWidget(self.map_dock)
+            self.map_dock.deleteLater()
+            self.map_dock = None
+
+        if self.toc_dock:
+            self.iface.removeDockWidget(self.toc_dock)
+            self.toc_dock.deleteLater()
+            self.toc_dock = None
+
+        self.right_canvas = None
+        self.bridge = None
+        self.cursor_marker_outer = None
+        self.cursor_marker_inner = None
+
+        self.btn_toggle_dock.setText("Undock")
+
+    # --------------------------------------------------
+    # LAYERS
+    # --------------------------------------------------
+
+    def add_selected_layers(self):
         for lyr in self.iface.layerTreeView().selectedLayers():
             if not self.right_root.findLayer(lyr.id()):
                 self.right_root.addLayer(lyr)
 
-        self.refresh_right_canvas()
+        if len(self.right_root.findLayers()) == 1:
+            self.right_canvas.zoomToFullExtent()
 
-    def refresh_right_canvas(self):
-        if not self.right_canvas:
+    def right_layer_context_menu(self, pos):
+        menu = QMenu()
+        remove_action = menu.addAction("Remove selected layer(s)")
+        clear_action = menu.addAction("Clear right view")
+
+        action = menu.exec_(self.tree_view.mapToGlobal(pos))
+
+        if action == remove_action:
+            for node in self.tree_view.selectedNodes():
+                self.right_root.removeChildNode(node)
+        elif action == clear_action:
+            self.right_root.clear()
+
+    # --------------------------------------------------
+    # SYNC
+    # --------------------------------------------------
+
+    def sync_left_to_right(self):
+        if self._syncing or not self.right_canvas:
             return
-
-        layers = [
-            n.layer() for n in self.right_root.findLayers()
-            if n.isVisible() and n.layer()
-        ]
-        self.right_canvas.setLayers(layers)
+        self._syncing = True
+        self.right_canvas.setExtent(self.left_canvas.extent())
         self.right_canvas.refresh()
+        self._syncing = False
 
-    def sync_extent_func(self):
+    def sync_left_crs_to_right(self):
         if self.right_canvas:
-            self.right_canvas.setExtent(self.main_canvas.extent())
+            self.right_canvas.setDestinationCrs(
+                self.left_canvas.mapSettings().destinationCrs()
+            )
             self.right_canvas.refresh()
 
-    def sync_cursor_func(self, pt: QgsPointXY):
-        if self.cursor_marker:
-            self.cursor_marker.setCenter(pt)
-            self.cursor_marker.show()
+    def sync_cursor(self, pt: QgsPointXY):
+        if self.cursor_marker_outer and self.cursor_marker_inner:
+            self.cursor_marker_outer.setCenter(pt)
+            self.cursor_marker_inner.setCenter(pt)
+            self.right_canvas.refresh()
